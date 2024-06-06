@@ -40,6 +40,8 @@ def find_edges(g, v):
 def angle_and_distance(point1, point2):
     distance = math.dist(point1, point2)
     c_length = abs(point2.y - point1.y)
+    if distance == 0:
+        distance = 0.001
     angle = math.asin(c_length / distance)
     if (point2.x - point1.x > 0) and (point2.y - point1.y == 0):
         return angle, distance
@@ -100,20 +102,18 @@ def check_edge_inside(base_point, point1, point2, point_vis):
 
 def check_non_inner_edge(start_point, w_j):
     subarray = find_subarray_with_point(obstacles, start_point)
-    if subarray is not None and len(subarray) > 3:
-        if w_j in subarray:
-            if w_j not in find_edges(graph, start_point):
-                index = subarray.index(start_point)
-                left = index - 1
-                right = index + 1
-                if left < 0:
-                    left += len(subarray)
-                if right == len(subarray):
-                    right -= len(subarray)
-                first_edge_point = subarray[left]
-                second_edge_point = subarray[right]
-                if check_edge_inside(start_point, first_edge_point, second_edge_point, w_j):
-                    return False
+    if subarray and len(subarray) > 3 and w_j in subarray and w_j not in find_edges(graph, start_point):
+        index = subarray.index(start_point)
+        left = index - 1
+        right = index + 1
+        if left < 0:
+            left += len(subarray)
+        if right == len(subarray):
+            right -= len(subarray)
+        first_edge_point = subarray[left]
+        second_edge_point = subarray[right]
+        if check_edge_inside(start_point, first_edge_point, second_edge_point, w_j):
+            return False
     return True
 
 
@@ -134,28 +134,56 @@ def is_clockwise(segment_start, segment_end, point_out):
         return 0  # point is on the segment
 
 
-def visible(sorted_edges, tree, w, j, visible_points_array, start_point):
+def check_direct_connection(start, finish):
+    for obs in obstacles:
+        for k in range(len(obs)):
+            if segments_intersect(obs[k], obs[(k + 1) % len(obs)], start, finish):
+                return False
+    return True
+
+
+def check_intersect_with_obstacle(start_point, w_i):
+    polygon = find_subarray_with_point(obstacles, w_i)
+    if not polygon:
+        return False
+    n = len(polygon)
+    for j in range(n):
+        next_j = (j + 1) % n
+        if segments_intersect(start_point, w_i, polygon[j], polygon[next_j]):
+            return True
+    return False
+
+
+def visible(tree, w, j, visible_points_array, start_point):
     if len(tree) == 0:
+        if check_intersect_with_obstacle(start_point, w[j]) or check_intersect_with_obstacle(w[j], start_point):
+            return False
+        if not check_non_inner_edge(start_point, w[j]):
+            return False
         visible_points_array.append(w[j])
         return True
     if j == 0 or not point_on_line(w[j - 1], start_point, w[j]):
-        p1 = sorted_edges[tree[0]][0]
-        p2 = sorted_edges[tree[0]][1]
+        p1 = edges_array[tree[0][1]][0]
+        p2 = edges_array[tree[0][1]][1]
         if segments_intersect(start_point, w[j], p1, p2):
             return False
         else:
             if not check_non_inner_edge(start_point, w[j]):
+                return False
+            if check_intersect_with_obstacle(start_point, w[j]) or check_intersect_with_obstacle(w[j], start_point):
                 return False
             visible_points_array.append(w[j])
             return True
     else:
         if visible_points_array and (w[j - 1] == visible_points_array[-1]):
             for h in tree:
-                p1 = sorted_edges[h][0]
-                p2 = sorted_edges[h][1]
+                p1 = edges_array[h[1]][0]
+                p2 = edges_array[h[1]][1]
                 if segments_intersect(p1, p2, w[j - 1], w[j]):
                     return False
-            if not check_non_inner_edge(w[j-1], w[j]):
+            if not check_non_inner_edge(w[j - 1], w[j]):
+                return False
+            if check_intersect_with_obstacle(start_point, w[j]) or check_intersect_with_obstacle(w[j], start_point):
                 return False
             visible_points_array.append(w[j])
             return True
@@ -163,67 +191,57 @@ def visible(sorted_edges, tree, w, j, visible_points_array, start_point):
             return False
 
 
-def find_visible_points(start_point, graph, w, visible_graph, all_points):
-    encountered_edges = set()
-    far_right_point = Point(max(point.x for point in all_points) + 1, start_point.y)
+def get_index_in_encountered_edges(element):
+    if element in edges_dict:
+        return edges_dict[element]
+    else:
+        return edges_dict[element[1], element[0]]
 
+
+def find_visible_points(start_point, w, visible_graph):
+    tree = SortedList()
+    far_right_point = Point(max(p.x for p in all_points) + 1, start_point.y)
+
+    temp_set = set()
     for vertex, neighbors in graph.items():
         for neighbor in neighbors:
-            edge = tuple(sorted([vertex, neighbor]))
-            if segments_intersect(start_point, far_right_point, vertex, neighbor):
-                encountered_edges.add(edge)
+            if vertex != start_point and neighbor != start_point:
+                edge = tuple(sorted([vertex, neighbor]))
+                if segments_intersect(start_point, far_right_point, vertex, neighbor):
+                    temp_set.add(edge)
 
-    sorted_edges = sorted(encountered_edges, key=lambda edge: distance_from_point_to_edge(S, edge))
-    tree = SortedList(range(len(sorted_edges)))
+    for e in temp_set:
+        dist = distance_from_point_to_edge(start_point, e)
+        ind = get_index_in_encountered_edges(e)
+        tree.add((dist, ind))
 
     visib_points = []
     for i in range(len(w)):
         if w[i] == start_point:
             continue
-        visible(sorted_edges, tree, w, i, visib_points, start_point)
+        visible(tree, w, i, visib_points, start_point)
         if i != len(w) - 1:
             adjacent_points = find_edges(graph, w[i])
-            saved_point = []
             for p in adjacent_points:
                 orient = is_clockwise(start_point, w[i], p)
                 if orient == 1:
                     if start_point != p:
-                        saved_point.append(p)
+                        dist = distance_from_point_to_edge(start_point, (w[i], p))
+                        ind = get_index_in_encountered_edges((w[i], p))
+                        tree.add((dist, ind))
                 elif orient == -1:
-                    if Point(w[i], p) in sorted_edges:
-                        index = sorted_edges.index(Point(w[i], p))
-                        tree.discard(index)
-                    elif Point(p, w[i]) in sorted_edges:
-                        index = sorted_edges.index(Point(p, w[i]))
-                        tree.discard(index)
-            if len(saved_point) == 2:
-                p1_angle = segments_angle(w[i], start_point, saved_point[0])
-                p2_angle = segments_angle(w[i], start_point, saved_point[1])
-                if p1_angle < p2_angle:
-                    sorted_edges.append((w[i], saved_point[0]))
-                    tree.add(len(sorted_edges) - 1)
-                    sorted_edges.append((w[i], saved_point[1]))
-                    tree.add(len(sorted_edges) - 1)
-                else:
-                    sorted_edges.append((w[i], saved_point[1]))
-                    tree.add(len(sorted_edges) - 1)
-                    sorted_edges.append((w[i], saved_point[0]))
-                    tree.add(len(sorted_edges) - 1)
-            elif len(saved_point) == 1:
-                sorted_edges.append((w[i], saved_point[0]))
-                tree.add(len(sorted_edges) - 1)
-
+                    if (w[i], p) in edges_dict or (p, w[i]) in edges_dict:
+                        dist = distance_from_point_to_edge(start_point, (w[i], p))
+                        ind = get_index_in_encountered_edges((w[i], p))
+                        tree.discard((dist, ind))
     for edge in visib_points:
         add_edge(visible_graph, start_point, edge)
 
 
-def visibility_graph(graph, visible_graph, all_points):
+def visibility_graph(visible_graph):
     for point in all_points:
-        copy_array = obstacle_points.copy()
-        if point in obstacle_points:
-            copy_array.remove(point)
-        sorted_points = sorted(copy_array, key=partial(angle_and_distance, point))
-        find_visible_points(point, graph, sorted_points, visible_graph, all_points)
+        sorted_points = sorted(obstacle_points, key=partial(angle_and_distance, point))
+        find_visible_points(point, sorted_points, visible_graph)
 
 
 def distance_calc(point1, point2):
@@ -299,6 +317,7 @@ if __name__ == "__main__":
 
     graph = {}
     visible_graph = {}
+    encountered_edges_set = set()
 
     all_points = [S, T]
     obstacle_points = []
@@ -309,16 +328,19 @@ if __name__ == "__main__":
     for obstacle in obstacles:
         for i in range(len(obstacle)):
             add_edge(graph, obstacle[i], obstacle[(i + 1) % len(obstacle)])
+            encountered_edges_set.add((obstacle[i], obstacle[(i + 1) % len(obstacle)]))
 
-    visibility_graph(graph, visible_graph, all_points)
+    edges_dict = {}
+    edges_array = []
 
-    # point = all_points[6]
-    # print(point)
-    # copy_array = obstacle_points.copy()
-    # if point in obstacle_points:
-    #     copy_array.remove(point)
-    # sorted_points = sorted(copy_array, key=partial(angle_and_distance, point))
-    # visible_points(point, graph, sorted_points, visible_graph, all_points, obstacles)
+    for index, tup in enumerate(encountered_edges_set):
+        edges_dict[tup] = index
+        edges_array.append(tup)
+
+    if check_direct_connection(S, T):
+        add_edge(visible_graph, S, T)
+    else:
+        visibility_graph(visible_graph)
 
     shortest_path_edges = dijkstra(visible_graph, S, T)
 
